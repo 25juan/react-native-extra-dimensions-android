@@ -10,7 +10,7 @@ import android.view.Display;
 import android.provider.Settings;
 import android.content.res.Resources;
 import android.view.WindowManager;
-import android.view.ViewConfiguration;
+import android.provider.Settings.Global;
 
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.LifecycleEventListener;
@@ -79,14 +79,8 @@ public class ExtraDimensionsModule extends ReactContextBaseJavaModule implements
         constants.put("STATUS_BAR_HEIGHT", getStatusBarHeight(metrics));
         constants.put("SOFT_MENU_BAR_HEIGHT", getSoftMenuBarHeight(metrics));
         constants.put("SMART_BAR_HEIGHT", getSmartBarHeight(metrics));
-        constants.put("SOFT_MENU_BAR_ENABLED", hasPermanentMenuKey());
 
         return constants;
-    }
-
-    private boolean hasPermanentMenuKey() {
-        final Context ctx = getReactApplicationContext();
-        return ViewConfiguration.get(ctx).hasPermanentMenuKey();
     }
 
     private float getStatusBarHeight(DisplayMetrics metrics) {
@@ -98,20 +92,26 @@ public class ExtraDimensionsModule extends ReactContextBaseJavaModule implements
             : 0;
     }
 
+    private boolean checkDeviceHasNavigationBar() {
+        final Context ctx = getReactApplicationContext();
+        boolean isFull = Settings.Global.getInt(ctx.getContentResolver(), "force_fsg_nav_bar", 0) != 0;
+        return !isFull;
+    }
+
     private float getSoftMenuBarHeight(DisplayMetrics metrics) {
-        if(hasPermanentMenuKey()) {
-            return 0;
-        }
         final float realHeight = getRealHeight(metrics);
         final Context ctx = getReactApplicationContext();
         final DisplayMetrics usableMetrics = ctx.getResources().getDisplayMetrics();
 
-        // Passing getMetrics will update the value of the Object DisplayMetrics metrics
         ((WindowManager) mReactContext.getSystemService(Context.WINDOW_SERVICE))
                 .getDefaultDisplay().getMetrics(metrics);
         final int usableHeight = usableMetrics.heightPixels;
-
-        return Math.max(0, realHeight - usableHeight / metrics.density);
+        final boolean showNavBar = checkDeviceHasNavigationBar();
+        if(showNavBar){
+            return Math.max(0, realHeight - usableHeight / metrics.density);
+        }else{
+            return 0;
+        }
     }
 
     private float getRealHeight(DisplayMetrics metrics) {
@@ -130,19 +130,24 @@ public class ExtraDimensionsModule extends ReactContextBaseJavaModule implements
         final boolean autoHideSmartBar = Settings.System.getInt(context.getContentResolver(),
             "mz_smartbar_auto_hide", 0) == 1;
  
-        if (!isMeiZu || autoHideSmartBar) {
+        if (isMeiZu) {
+            if (autoHideSmartBar) {
+                return 0;
+            } else {
+                try {
+                    Class c = Class.forName("com.android.internal.R$dimen");
+                    Object obj = c.newInstance();
+                    Field field = c.getField("mz_action_button_min_height");
+                    int height = Integer.parseInt(field.get(obj).toString());
+                    return context.getResources().getDimensionPixelSize(height) / metrics.density;
+                } catch (Throwable e) { // 不自动隐藏smartbar同时又没有smartbar高度字段供访问，取系统navigationbar的高度
+                    return getNormalNavigationBarHeight(context) / metrics.density;
+                }
+            }
+        } else {
             return 0;
+            //return getNormalNavigationBarHeight(context) / metrics.density;
         }
-        try {
-            Class c = Class.forName("com.android.internal.R$dimen");
-            Object obj = c.newInstance();
-            Field field = c.getField("mz_action_button_min_height");
-            int height = Integer.parseInt(field.get(obj).toString());
-            return context.getResources().getDimensionPixelSize(height) / metrics.density;
-        } catch (Throwable e) { // 不自动隐藏smartbar同时又没有smartbar高度字段供访问，取系统navigationbar的高度
-            return getNormalNavigationBarHeight(context) / metrics.density;
-        }
-        //return getNormalNavigationBarHeight(context) / metrics.density;
     }
  
     protected static float getNormalNavigationBarHeight(final Context ctx) {
